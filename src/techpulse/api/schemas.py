@@ -39,3 +39,21 @@ class JobResponse(BaseModel):
     created_at: Optional[datetime] = Field(None, description="Original publication timestamp")
     inserted_at: datetime = Field(..., description="Record insertion timestamp")
     updated_at: datetime = Field(..., description="Record last modification timestamp")
+
+
+class JobListResponse(BaseModel):
+    """
+    Paginated response schema for job listings.
+
+    Attributes:
+        total: Total number of matching records in the database.
+        jobs: List of paginated JobResponse items for the current page.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
+    total: int = Field(..., description="Total number of jobs in database")
+    jobs: List[JobResponse] = Field(..., description="Paginated list of job postings")
