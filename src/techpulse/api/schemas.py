@@ -57,3 +57,30 @@ class JobListResponse(BaseModel):
 
     total: int = Field(..., description="Total number of jobs in database")
     jobs: List[JobResponse] = Field(..., description="Paginated list of job postings")
+
+
+class AnalyticsOverviewResponse(BaseModel):
+    """
+    Schema representing aggregate analytics overview statistics across job listings.
+
+    Attributes:
+        total_jobs: Total number of jobs in the database.
+        remote_jobs: Number of jobs where remote is true.
+        non_remote_jobs: Number of jobs where remote is false.
+        jobs_with_location: Number of jobs with a non-null, non-empty location.
+        unique_companies: Number of distinct hiring companies.
+        unique_locations: Number of distinct non-null, non-empty locations.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
+    total_jobs: int = Field(..., ge=0, description="Total number of jobs in database")
+    remote_jobs: int = Field(..., ge=0, description="Number of fully remote jobs")
+    non_remote_jobs: int = Field(..., ge=0, description="Number of on-site or hybrid non-remote jobs")
+    jobs_with_location: int = Field(..., ge=0, description="Number of jobs with a non-null, non-empty location")
+    unique_companies: int = Field(..., ge=0, description="Number of distinct hiring companies")
+    unique_locations: int = Field(..., ge=0, description="Number of distinct non-null, non-empty locations")
+

@@ -14,7 +14,11 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from pydantic import ValidationError
-from techpulse.api.schemas import JobResponse
+from techpulse.api.schemas import (
+    AnalyticsOverviewResponse,
+    JobListResponse,
+    JobResponse,
+)
 from techpulse.database.models import Job
 
 
@@ -97,6 +101,47 @@ class TestApiSchemas(unittest.TestCase):
         json_output = job_schema.model_dump_json()
         self.assertIn('"slug":"senior-python-dev-123"', json_output)
         self.assertIn('"remote":true', json_output)
+
+    def test_job_list_response(self):
+        """Verify JobListResponse schema wraps total count and list of jobs."""
+        job_schema = JobResponse(**self.valid_data)
+        list_response = JobListResponse(total=1, jobs=[job_schema])
+        self.assertEqual(list_response.total, 1)
+        self.assertEqual(len(list_response.jobs), 1)
+        self.assertEqual(list_response.jobs[0].slug, "senior-python-dev-123")
+        dumped = list_response.model_dump()
+        self.assertIn("total", dumped)
+        self.assertIn("jobs", dumped)
+
+    def test_analytics_overview_response(self):
+        """Verify AnalyticsOverviewResponse schema validation and serialization."""
+        data = {
+            "total_jobs": 300,
+            "remote_jobs": 50,
+            "non_remote_jobs": 250,
+            "jobs_with_location": 260,
+            "unique_companies": 180,
+            "unique_locations": 110,
+        }
+        schema = AnalyticsOverviewResponse(**data)
+        self.assertEqual(schema.total_jobs, 300)
+        self.assertEqual(schema.remote_jobs, 50)
+        self.assertEqual(schema.non_remote_jobs, 250)
+        self.assertEqual(schema.jobs_with_location, 260)
+        self.assertEqual(schema.unique_companies, 180)
+        self.assertEqual(schema.unique_locations, 110)
+
+        # Negative values should fail validation
+        with self.assertRaises(ValidationError):
+            AnalyticsOverviewResponse(
+                total_jobs=-1,
+                remote_jobs=0,
+                non_remote_jobs=0,
+                jobs_with_location=0,
+                unique_companies=0,
+                unique_locations=0,
+            )
+
 
 
 if __name__ == "__main__":
