@@ -21,6 +21,7 @@ from techpulse.api.schemas import (
     JobResponse,
     LocationCount,
     LocationsResponse,
+    RemoteDistributionResponse,
     TitleCount,
     TopCompaniesResponse,
     TopTitlesResponse,
@@ -219,6 +220,55 @@ class TestApiSchemas(unittest.TestCase):
         # Negative total_locations should fail
         with self.assertRaises(ValidationError):
             LocationsResponse(total_locations=-1, locations=[])
+
+    def test_remote_distribution_response(self):
+        """Verify RemoteDistributionResponse schema validation and serialization."""
+        data = {
+            "total_jobs": 300,
+            "remote_jobs": 12,
+            "non_remote_jobs": 288,
+            "unspecified_jobs": 0,
+            "remote_percentage": 4.0,
+            "non_remote_percentage": 96.0,
+            "unspecified_percentage": 0.0,
+        }
+        response = RemoteDistributionResponse(**data)
+        self.assertEqual(response.total_jobs, 300)
+        self.assertEqual(response.remote_jobs, 12)
+        self.assertEqual(response.non_remote_jobs, 288)
+        self.assertEqual(response.unspecified_jobs, 0)
+        self.assertEqual(response.remote_percentage, 4.0)
+        self.assertEqual(response.non_remote_percentage, 96.0)
+        self.assertEqual(response.unspecified_percentage, 0.0)
+
+        dumped = response.model_dump()
+        self.assertEqual(dumped["remote_percentage"], 4.0)
+        self.assertEqual(dumped["non_remote_percentage"], 96.0)
+
+        # Negative count should fail
+        with self.assertRaises(ValidationError):
+            RemoteDistributionResponse(
+                total_jobs=-1,
+                remote_jobs=0,
+                non_remote_jobs=0,
+                unspecified_jobs=0,
+                remote_percentage=0.0,
+                non_remote_percentage=0.0,
+                unspecified_percentage=0.0,
+            )
+
+        # Percentage > 100 should fail
+        with self.assertRaises(ValidationError):
+            RemoteDistributionResponse(
+                total_jobs=100,
+                remote_jobs=100,
+                non_remote_jobs=0,
+                unspecified_jobs=0,
+                remote_percentage=105.0,
+                non_remote_percentage=0.0,
+                unspecified_percentage=0.0,
+            )
+
 
 
 

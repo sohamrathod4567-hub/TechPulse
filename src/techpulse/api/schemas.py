@@ -181,5 +181,34 @@ class LocationsResponse(BaseModel):
     locations: List[LocationCount] = Field(..., description="List of normalized locations and their posting counts")
 
 
+class RemoteDistributionResponse(BaseModel):
+    """
+    Schema representing distribution and proportions of remote vs non-remote job listings.
+
+    Attributes:
+        total_jobs: Total number of jobs in database.
+        remote_jobs: Number of fully remote jobs (remote = TRUE).
+        non_remote_jobs: Number of on-site or hybrid non-remote jobs (remote = FALSE).
+        unspecified_jobs: Number of jobs with unspecified remote status (remote = NULL).
+        remote_percentage: Percentage of remote jobs (0.0 - 100.0).
+        non_remote_percentage: Percentage of non-remote jobs (0.0 - 100.0).
+        unspecified_percentage: Percentage of unspecified jobs (0.0 - 100.0).
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
+    total_jobs: int = Field(..., ge=0, description="Total number of jobs in database")
+    remote_jobs: int = Field(..., ge=0, description="Number of fully remote jobs")
+    non_remote_jobs: int = Field(..., ge=0, description="Number of on-site or hybrid non-remote jobs")
+    unspecified_jobs: int = Field(..., ge=0, description="Number of jobs with unspecified remote status")
+    remote_percentage: float = Field(..., ge=0.0, le=100.0, description="Percentage of remote jobs")
+    non_remote_percentage: float = Field(..., ge=0.0, le=100.0, description="Percentage of non-remote jobs")
+    unspecified_percentage: float = Field(..., ge=0.0, le=100.0, description="Percentage of unspecified remote jobs")
+
+
+
 
 

@@ -20,6 +20,7 @@ from techpulse.api.schemas import (
     JobResponse,
     LocationCount,
     LocationsResponse,
+    RemoteDistributionResponse,
     TitleCount,
     TopCompaniesResponse,
     TopTitlesResponse,
@@ -410,6 +411,61 @@ def get_locations(
     ]
 
     return LocationsResponse(total_locations=total_locations, locations=locations)
+
+
+@app.get(
+    "/analytics/remote-distribution",
+    status_code=status.HTTP_200_OK,
+    response_model=RemoteDistributionResponse,
+    summary="Get Remote Work Distribution",
+    tags=["Analytics"],
+)
+def get_remote_distribution(
+    db: Session = Depends(get_db),
+) -> RemoteDistributionResponse:
+    """
+    Compute distribution counts and percentages of remote, non-remote, and unspecified jobs.
+
+    Features:
+        - Classifies listings into remote (remote = TRUE), non-remote (remote = FALSE), and unspecified (remote IS NULL).
+        - Computes all counts directly in SQL via aggregate CASE expressions.
+        - Calculates percentages using total_jobs as denominator, rounded to two decimal places.
+        - Returns 0.0 for all percentages when total_jobs is zero.
+        - Safely handles empty databases.
+    """
+    stmt = select(
+        func.count(Job.id).label("total_jobs"),
+        func.count(case((Job.remote.is_(True), 1))).label("remote_jobs"),
+        func.count(case((Job.remote.is_(False), 1))).label("non_remote_jobs"),
+        func.count(case((Job.remote.is_(None), 1))).label("unspecified_jobs"),
+    )
+    row = db.execute(stmt).one()
+    data = row._mapping
+
+    total_jobs = data["total_jobs"] or 0
+    remote_jobs = data["remote_jobs"] or 0
+    non_remote_jobs = data["non_remote_jobs"] or 0
+    unspecified_jobs = data["unspecified_jobs"] or 0
+
+    if total_jobs > 0:
+        remote_percentage = round((remote_jobs / total_jobs) * 100.0, 2)
+        non_remote_percentage = round((non_remote_jobs / total_jobs) * 100.0, 2)
+        unspecified_percentage = round((unspecified_jobs / total_jobs) * 100.0, 2)
+    else:
+        remote_percentage = 0.0
+        non_remote_percentage = 0.0
+        unspecified_percentage = 0.0
+
+    return RemoteDistributionResponse(
+        total_jobs=total_jobs,
+        remote_jobs=remote_jobs,
+        non_remote_jobs=non_remote_jobs,
+        unspecified_jobs=unspecified_jobs,
+        remote_percentage=remote_percentage,
+        non_remote_percentage=non_remote_percentage,
+        unspecified_percentage=unspecified_percentage,
+    )
+
 
 
 

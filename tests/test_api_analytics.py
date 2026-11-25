@@ -14,7 +14,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -35,6 +35,31 @@ class TestAnalyticsEndpoint(unittest.TestCase):
             poolclass=StaticPool,
         )
         Base.metadata.create_all(bind=cls.test_engine)
+        # In SQLite test database only: relax NOT NULL on remote so we can test unspecified / NULL remote values
+        with cls.test_engine.begin() as conn:
+            conn.execute(text("DROP TABLE jobs"))
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE jobs (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        slug VARCHAR(255) NOT NULL,
+                        title VARCHAR(255) NOT NULL,
+                        company_name VARCHAR(255) NOT NULL,
+                        description TEXT NOT NULL,
+                        location VARCHAR(255),
+                        remote BOOLEAN,
+                        url TEXT NOT NULL,
+                        tags JSONB NOT NULL DEFAULT '[]',
+                        job_types JSONB NOT NULL DEFAULT '[]',
+                        created_at DATETIME,
+                        inserted_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                        CONSTRAINT uq_jobs_slug UNIQUE (slug)
+                    )
+                    """
+                )
+            )
         cls.TestingSessionLocal = sessionmaker(
             bind=cls.test_engine,
             autoflush=False,
@@ -1012,6 +1037,178 @@ class TestAnalyticsEndpoint(unittest.TestCase):
                     422,
                     f"Expected 422 for limit={lim}, got {response.status_code}",
                 )
+
+    def test_remote_distribution_empty_database(self):
+        """Verify GET /analytics/remote-distribution returns 0 counts and 0.0 percentages on empty database."""
+        response = self.client.get("/analytics/remote-distribution")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_jobs"], 0)
+        self.assertEqual(data["remote_jobs"], 0)
+        self.assertEqual(data["non_remote_jobs"], 0)
+        self.assertEqual(data["unspecified_jobs"], 0)
+        self.assertEqual(data["remote_percentage"], 0.0)
+        self.assertEqual(data["non_remote_percentage"], 0.0)
+        self.assertEqual(data["unspecified_percentage"], 0.0)
+
+    def test_remote_distribution_counts_and_percentages(self):
+        """Verify correct category counts and accurate percentages on known dataset."""
+        with self.TestingSessionLocal() as session:
+            # 6 remote, 14 non-remote = 20 total jobs
+            jobs = [
+                Job(
+                    id=i + 1,
+                    slug=f"job-dist-{i + 1}",
+                    title=f"Engineer {i + 1}",
+                    company_name="TechCorp",
+                    description="Job desc",
+                    remote=(i < 6),
+                    url=f"https://example.com/{i + 1}",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                for i in range(20)
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        response = self.client.get("/analytics/remote-distribution")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_jobs"], 20)
+        self.assertEqual(data["remote_jobs"], 6)
+        self.assertEqual(data["non_remote_jobs"], 14)
+        self.assertEqual(data["unspecified_jobs"], 0)
+        self.assertEqual(data["remote_percentage"], 30.0)
+        self.assertEqual(data["non_remote_percentage"], 70.0)
+        self.assertEqual(data["unspecified_percentage"], 0.0)
+
+    def test_remote_distribution_with_null_remote(self):
+        """Verify records with NULL remote status are classified into unspecified_jobs."""
+        with self.TestingSessionLocal() as session:
+            # 2 remote=True, 3 remote=False, 5 remote=NULL (total 10)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO jobs (id, slug, title, company_name, description, url, remote)
+                    VALUES 
+                        (1, 'slug-1', 'Role 1', 'Company A', 'Desc', 'https://example.com/1', 1),
+                        (2, 'slug-2', 'Role 2', 'Company A', 'Desc', 'https://example.com/2', 1),
+                        (3, 'slug-3', 'Role 3', 'Company B', 'Desc', 'https://example.com/3', 0),
+                        (4, 'slug-4', 'Role 4', 'Company B', 'Desc', 'https://example.com/4', 0),
+                        (5, 'slug-5', 'Role 5', 'Company B', 'Desc', 'https://example.com/5', 0),
+                        (6, 'slug-6', 'Role 6', 'Company C', 'Desc', 'https://example.com/6', NULL),
+                        (7, 'slug-7', 'Role 7', 'Company C', 'Desc', 'https://example.com/7', NULL),
+                        (8, 'slug-8', 'Role 8', 'Company C', 'Desc', 'https://example.com/8', NULL),
+                        (9, 'slug-9', 'Role 9', 'Company C', 'Desc', 'https://example.com/9', NULL),
+                        (10, 'slug-10', 'Role 10', 'Company C', 'Desc', 'https://example.com/10', NULL)
+                    """
+                )
+            )
+            session.commit()
+
+        response = self.client.get("/analytics/remote-distribution")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_jobs"], 10)
+        self.assertEqual(data["remote_jobs"], 2)
+        self.assertEqual(data["non_remote_jobs"], 3)
+        self.assertEqual(data["unspecified_jobs"], 5)
+        self.assertEqual(data["remote_percentage"], 20.0)
+        self.assertEqual(data["non_remote_percentage"], 30.0)
+        self.assertEqual(data["unspecified_percentage"], 50.0)
+
+    def test_remote_distribution_percentages_sum_to_approximately_100(self):
+        """Verify percentages sum to approximately 100% across odd distributions."""
+        with self.TestingSessionLocal() as session:
+            # 1 remote, 1 non-remote, 1 unspecified (1/3 each = 33.33%)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO jobs (id, slug, title, company_name, description, url, remote)
+                    VALUES 
+                        (1, 'slug-1', 'Role 1', 'Company A', 'Desc', 'https://example.com/1', 1),
+                        (2, 'slug-2', 'Role 2', 'Company B', 'Desc', 'https://example.com/2', 0),
+                        (3, 'slug-3', 'Role 3', 'Company C', 'Desc', 'https://example.com/3', NULL)
+                    """
+                )
+            )
+            session.commit()
+
+        response = self.client.get("/analytics/remote-distribution")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_jobs"], 3)
+        self.assertEqual(data["remote_jobs"], 1)
+        self.assertEqual(data["non_remote_jobs"], 1)
+        self.assertEqual(data["unspecified_jobs"], 1)
+        self.assertEqual(data["remote_percentage"], 33.33)
+        self.assertEqual(data["non_remote_percentage"], 33.33)
+        self.assertEqual(data["unspecified_percentage"], 33.33)
+
+        total_pct = (
+            data["remote_percentage"]
+            + data["non_remote_percentage"]
+            + data["unspecified_percentage"]
+        )
+        self.assertAlmostEqual(total_pct, 100.0, places=1)
+
+    def test_existing_analytics_endpoints_regression(self):
+        """Verify /analytics/overview, /analytics/top-titles, /analytics/top-companies, /analytics/locations continue working."""
+        with self.TestingSessionLocal() as session:
+            jobs = [
+                Job(
+                    id=1,
+                    slug="job-reg-1",
+                    title="Software Engineer",
+                    company_name="Google",
+                    description="Desc",
+                    location="Berlin",
+                    remote=True,
+                    url="https://example.com/1",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                ),
+                Job(
+                    id=2,
+                    slug="job-reg-2",
+                    title="Software Engineer",
+                    company_name="Google",
+                    description="Desc",
+                    location="Berlin",
+                    remote=False,
+                    url="https://example.com/2",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                ),
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        # 1. Overview
+        res_overview = self.client.get("/analytics/overview")
+        self.assertEqual(res_overview.status_code, 200)
+        self.assertEqual(res_overview.json()["total_jobs"], 2)
+
+        # 2. Top titles
+        res_titles = self.client.get("/analytics/top-titles")
+        self.assertEqual(res_titles.status_code, 200)
+        self.assertEqual(res_titles.json()["total_titles"], 1)
+
+        # 3. Top companies
+        res_companies = self.client.get("/analytics/top-companies")
+        self.assertEqual(res_companies.status_code, 200)
+        self.assertEqual(res_companies.json()["total_companies"], 1)
+
+        # 4. Locations
+        res_locations = self.client.get("/analytics/locations")
+        self.assertEqual(res_locations.status_code, 200)
+        self.assertEqual(res_locations.json()["total_locations"], 1)
+
 
 
 
