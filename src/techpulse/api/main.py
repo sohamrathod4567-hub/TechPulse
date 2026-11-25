@@ -18,6 +18,8 @@ from techpulse.api.schemas import (
     CompanyCount,
     JobListResponse,
     JobResponse,
+    LocationCount,
+    LocationsResponse,
     TitleCount,
     TopCompaniesResponse,
     TopTitlesResponse,
@@ -348,6 +350,67 @@ def get_top_companies(
     ]
 
     return TopCompaniesResponse(total_companies=total_companies, companies=companies)
+
+
+@app.get(
+    "/analytics/locations",
+    status_code=status.HTTP_200_OK,
+    response_model=LocationsResponse,
+    summary="Get Job Locations by Posting Frequency",
+    tags=["Analytics"],
+)
+def get_locations(
+    limit: int = Query(
+        default=10,
+        ge=1,
+        le=50,
+        description="Maximum number of top locations to return (1-50)",
+    ),
+    db: Session = Depends(get_db),
+) -> LocationsResponse:
+    """
+    Retrieve job locations ranked by posting frequency with alphabetical tie-breaking.
+
+    Features:
+        - Excludes NULL, empty, and whitespace-only locations.
+        - Normalizes locations using SQL TRIM to prevent duplicate groupings caused by whitespace.
+        - Groups job listings by normalized location and computes occurrence counts.
+        - Sorts primarily by job_count descending, secondarily by location ascending.
+        - Calculates the total number of distinct valid normalized locations.
+        - Limits result set within range [1, 50] (default 10).
+        - Safely handles empty databases.
+    """
+    # 1. Total distinct valid normalized locations count (independent of limit)
+    total_count_stmt = select(
+        func.count(func.distinct(func.trim(Job.location)))
+    ).where(
+        Job.location.is_not(None),
+        func.trim(Job.location) != "",
+    )
+    total_locations = db.scalar(total_count_stmt) or 0
+
+    # 2. Grouped, counted, sorted, and limited locations query
+    locations_stmt = (
+        select(
+            func.trim(Job.location).label("location"),
+            func.count(Job.id).label("job_count"),
+        )
+        .where(
+            Job.location.is_not(None),
+            func.trim(Job.location) != "",
+        )
+        .group_by(func.trim(Job.location))
+        .order_by(func.count(Job.id).desc(), func.trim(Job.location).asc())
+        .limit(limit)
+    )
+    rows = db.execute(locations_stmt).all()
+    locations = [
+        LocationCount(location=row.location, job_count=row.job_count)
+        for row in rows
+    ]
+
+    return LocationsResponse(total_locations=total_locations, locations=locations)
+
 
 
 

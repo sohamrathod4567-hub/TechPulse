@@ -19,6 +19,8 @@ from techpulse.api.schemas import (
     CompanyCount,
     JobListResponse,
     JobResponse,
+    LocationCount,
+    LocationsResponse,
     TitleCount,
     TopCompaniesResponse,
     TopTitlesResponse,
@@ -193,6 +195,31 @@ class TestApiSchemas(unittest.TestCase):
         # Negative total_companies should fail
         with self.assertRaises(ValidationError):
             TopCompaniesResponse(total_companies=-1, companies=[])
+
+    def test_locations_response(self):
+        """Verify LocationCount and LocationsResponse schema validation and serialization."""
+        loc1 = LocationCount(location="Berlin", job_count=28)
+        loc2 = LocationCount(location="London", job_count=28)
+
+        response = LocationsResponse(total_locations=108, locations=[loc1, loc2])
+        self.assertEqual(response.total_locations, 108)
+        self.assertEqual(len(response.locations), 2)
+        self.assertEqual(response.locations[0].location, "Berlin")
+        self.assertEqual(response.locations[0].job_count, 28)
+
+        dumped = response.model_dump()
+        self.assertIn("total_locations", dumped)
+        self.assertIn("locations", dumped)
+        self.assertEqual(dumped["locations"][0]["location"], "Berlin")
+
+        # Negative job_count should fail
+        with self.assertRaises(ValidationError):
+            LocationCount(location="Munich", job_count=-1)
+
+        # Negative total_locations should fail
+        with self.assertRaises(ValidationError):
+            LocationsResponse(total_locations=-1, locations=[])
+
 
 
 

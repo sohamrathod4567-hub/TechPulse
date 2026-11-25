@@ -745,6 +745,275 @@ class TestAnalyticsEndpoint(unittest.TestCase):
                     f"Expected 422 for limit={lim}, got {response.status_code}",
                 )
 
+    def test_locations_empty_database(self):
+        """Verify GET /analytics/locations returns total_locations=0 and empty list on empty database."""
+        response = self.client.get("/analytics/locations")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_locations"], 0)
+        self.assertEqual(data["locations"], [])
+
+    def test_locations_counts_and_ordering(self):
+        """Verify locations calculates correct counts and orders by frequency descending."""
+        with self.TestingSessionLocal() as session:
+            # 4x "Berlin", 3x "London", 2x "Paris", 1x "Munich"
+            loc_data = (
+                ["Berlin"] * 4
+                + ["London"] * 3
+                + ["Paris"] * 2
+                + ["Munich"] * 1
+            )
+            jobs = [
+                Job(
+                    id=i + 1,
+                    slug=f"job-loc-{i + 1}",
+                    title=f"Engineer {i + 1}",
+                    company_name="TechCorp",
+                    description="Job desc",
+                    location=loc,
+                    url=f"https://example.com/{i + 1}",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                for i, loc in enumerate(loc_data)
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        response = self.client.get("/analytics/locations")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_locations"], 4)
+        self.assertEqual(len(data["locations"]), 4)
+
+        expected = [
+            ("Berlin", 4),
+            ("London", 3),
+            ("Paris", 2),
+            ("Munich", 1),
+        ]
+        for idx, (exp_loc, exp_count) in enumerate(expected):
+            self.assertEqual(data["locations"][idx]["location"], exp_loc)
+            self.assertEqual(data["locations"][idx]["job_count"], exp_count)
+
+    def test_locations_alphabetical_tie_breaker(self):
+        """Verify locations with identical job counts are ordered alphabetically ascending."""
+        with self.TestingSessionLocal() as session:
+            # Equal counts (2 each): "Zurich", "Amsterdam", "Berlin"
+            loc_data = ["Zurich", "Zurich", "Amsterdam", "Amsterdam", "Berlin", "Berlin"]
+            jobs = [
+                Job(
+                    id=i + 1,
+                    slug=f"job-loc-tie-{i + 1}",
+                    title=f"Role {i + 1}",
+                    company_name="TechCorp",
+                    description="Job desc",
+                    location=loc,
+                    url=f"https://example.com/{i + 1}",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                for i, loc in enumerate(loc_data)
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        response = self.client.get("/analytics/locations")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_locations"], 3)
+        self.assertEqual(len(data["locations"]), 3)
+
+        # Alphabetical order: Amsterdam, Berlin, Zurich
+        self.assertEqual(data["locations"][0]["location"], "Amsterdam")
+        self.assertEqual(data["locations"][0]["job_count"], 2)
+        self.assertEqual(data["locations"][1]["location"], "Berlin")
+        self.assertEqual(data["locations"][1]["job_count"], 2)
+        self.assertEqual(data["locations"][2]["location"], "Zurich")
+        self.assertEqual(data["locations"][2]["job_count"], 2)
+
+    def test_locations_excludes_null_empty_and_whitespace(self):
+        """Verify NULL, empty, and whitespace-only locations are excluded."""
+        with self.TestingSessionLocal() as session:
+            jobs = [
+                Job(
+                    id=1,
+                    slug="job-valid-loc",
+                    title="Dev",
+                    company_name="TechCorp",
+                    description="Job desc",
+                    location="Hamburg",
+                    url="https://example.com/1",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                ),
+                Job(
+                    id=2,
+                    slug="job-null-loc",
+                    title="Dev",
+                    company_name="TechCorp",
+                    description="Job desc",
+                    location=None,
+                    url="https://example.com/2",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                ),
+                Job(
+                    id=3,
+                    slug="job-empty-loc",
+                    title="Dev",
+                    company_name="TechCorp",
+                    description="Job desc",
+                    location="",
+                    url="https://example.com/3",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                ),
+                Job(
+                    id=4,
+                    slug="job-whitespace-loc",
+                    title="Dev",
+                    company_name="TechCorp",
+                    description="Job desc",
+                    location="     ",
+                    url="https://example.com/4",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                ),
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        response = self.client.get("/analytics/locations")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_locations"], 1)
+        self.assertEqual(len(data["locations"]), 1)
+        self.assertEqual(data["locations"][0]["location"], "Hamburg")
+        self.assertEqual(data["locations"][0]["job_count"], 1)
+
+    def test_locations_whitespace_normalization(self):
+        """Verify SQL TRIM normalizes leading/trailing whitespace into a single group."""
+        with self.TestingSessionLocal() as session:
+            jobs = [
+                Job(
+                    id=1,
+                    slug="job-norm-1",
+                    title="Dev",
+                    company_name="TechCorp",
+                    description="Job desc",
+                    location="Frankfurt",
+                    url="https://example.com/1",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                ),
+                Job(
+                    id=2,
+                    slug="job-norm-2",
+                    title="Dev",
+                    company_name="TechCorp",
+                    description="Job desc",
+                    location=" Frankfurt ",  # Leading and trailing spaces
+                    url="https://example.com/2",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                ),
+                Job(
+                    id=3,
+                    slug="job-norm-3",
+                    title="Dev",
+                    company_name="TechCorp",
+                    description="Job desc",
+                    location="Frankfurt  ",  # Trailing spaces
+                    url="https://example.com/3",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                ),
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        response = self.client.get("/analytics/locations")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_locations"], 1)
+        self.assertEqual(len(data["locations"]), 1)
+        self.assertEqual(data["locations"][0]["location"], "Frankfurt")
+        self.assertEqual(data["locations"][0]["job_count"], 3)
+
+    def test_locations_limit_and_total_locations_independence(self):
+        """Verify total_locations reflects all valid locations regardless of requested limit."""
+        with self.TestingSessionLocal() as session:
+            jobs = [
+                Job(
+                    id=i + 1,
+                    slug=f"job-dist-loc-{i + 1}",
+                    title="Dev",
+                    company_name="TechCorp",
+                    description="Job desc",
+                    location=f"City {i + 1:02d}",
+                    url=f"https://example.com/{i + 1}",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                for i in range(15)  # 15 distinct locations
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        # Request limit=5
+        response = self.client.get("/analytics/locations?limit=5")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_locations"], 15)
+        self.assertEqual(len(data["locations"]), 5)
+
+    def test_locations_default_limit(self):
+        """Verify default limit is 10 when not specified."""
+        with self.TestingSessionLocal() as session:
+            jobs = [
+                Job(
+                    id=i + 1,
+                    slug=f"job-def-loc-{i + 1}",
+                    title="Dev",
+                    company_name="TechCorp",
+                    description="Job desc",
+                    location=f"City {i + 1:02d}",
+                    url=f"https://example.com/{i + 1}",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                for i in range(15)
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        response = self.client.get("/analytics/locations")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_locations"], 15)
+        self.assertEqual(len(data["locations"]), 10)  # Default limit=10
+
+    def test_locations_limit_validation(self):
+        """Verify limit must be between 1 and 50, returning 422 for invalid values."""
+        invalid_limits = [0, -1, 51, 100, "abc"]
+        for lim in invalid_limits:
+            with self.subTest(limit=lim):
+                response = self.client.get(f"/analytics/locations?limit={lim}")
+                self.assertEqual(
+                    response.status_code,
+                    422,
+                    f"Expected 422 for limit={lim}, got {response.status_code}",
+                )
+
+
 
 
 

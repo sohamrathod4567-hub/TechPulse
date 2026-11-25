@@ -149,4 +149,37 @@ class TopCompaniesResponse(BaseModel):
     companies: List[CompanyCount] = Field(..., description="List of top hiring companies and their posting counts")
 
 
+class LocationCount(BaseModel):
+    """
+    Schema representing a job location and its posting frequency count.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
+    location: str = Field(..., description="Normalized geographic location or city")
+    job_count: int = Field(..., ge=0, description="Number of job postings in this location")
+
+
+class LocationsResponse(BaseModel):
+    """
+    Response schema for the locations analytics endpoint.
+
+    Attributes:
+        total_locations: Total number of distinct valid normalized locations in the database.
+        locations: List of locations sorted by frequency descending, then location ascending.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
+    total_locations: int = Field(..., ge=0, description="Total number of distinct valid normalized locations")
+    locations: List[LocationCount] = Field(..., description="List of normalized locations and their posting counts")
+
+
+
 
