@@ -545,6 +545,207 @@ class TestAnalyticsEndpoint(unittest.TestCase):
         self.assertEqual(data["titles"][0]["title"], "Valid Title")
         self.assertEqual(data["titles"][0]["job_count"], 1)
 
+    def test_top_companies_empty_database(self):
+        """Verify GET /analytics/top-companies returns total_companies=0 and empty list on empty database."""
+        response = self.client.get("/analytics/top-companies")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_companies"], 0)
+        self.assertEqual(data["companies"], [])
+
+    def test_top_companies_counts_and_ordering(self):
+        """Verify top companies calculates correct counts and orders by frequency descending."""
+        with self.TestingSessionLocal() as session:
+            # 5x "TechCorp", 3x "DataLab", 2x "CloudSystems", 1x "AlphaAI"
+            company_data = (
+                ["TechCorp"] * 5
+                + ["DataLab"] * 3
+                + ["CloudSystems"] * 2
+                + ["AlphaAI"] * 1
+            )
+            jobs = [
+                Job(
+                    id=i + 1,
+                    slug=f"job-comp-{i + 1}",
+                    title=f"Engineer {i + 1}",
+                    company_name=company,
+                    description="Job desc",
+                    url=f"https://example.com/{i + 1}",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                for i, company in enumerate(company_data)
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        response = self.client.get("/analytics/top-companies")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_companies"], 4)
+        self.assertEqual(len(data["companies"]), 4)
+
+        expected = [
+            ("TechCorp", 5),
+            ("DataLab", 3),
+            ("CloudSystems", 2),
+            ("AlphaAI", 1),
+        ]
+        for idx, (exp_comp, exp_count) in enumerate(expected):
+            self.assertEqual(data["companies"][idx]["company_name"], exp_comp)
+            self.assertEqual(data["companies"][idx]["job_count"], exp_count)
+
+    def test_top_companies_alphabetical_tie_breaker(self):
+        """Verify companies with identical job counts are ordered alphabetically ascending."""
+        with self.TestingSessionLocal() as session:
+            # Equal counts (2 each): "ZetaCorp", "AcmeInc", "BetaLLC"
+            company_data = ["ZetaCorp", "ZetaCorp", "AcmeInc", "AcmeInc", "BetaLLC", "BetaLLC"]
+            jobs = [
+                Job(
+                    id=i + 1,
+                    slug=f"job-comp-tie-{i + 1}",
+                    title=f"Role {i + 1}",
+                    company_name=company,
+                    description="Job desc",
+                    url=f"https://example.com/{i + 1}",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                for i, company in enumerate(company_data)
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        response = self.client.get("/analytics/top-companies")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_companies"], 3)
+        self.assertEqual(len(data["companies"]), 3)
+
+        # Alphabetical order: AcmeInc, BetaLLC, ZetaCorp
+        self.assertEqual(data["companies"][0]["company_name"], "AcmeInc")
+        self.assertEqual(data["companies"][0]["job_count"], 2)
+        self.assertEqual(data["companies"][1]["company_name"], "BetaLLC")
+        self.assertEqual(data["companies"][1]["job_count"], 2)
+        self.assertEqual(data["companies"][2]["company_name"], "ZetaCorp")
+        self.assertEqual(data["companies"][2]["job_count"], 2)
+
+    def test_top_companies_excludes_null_empty_and_whitespace(self):
+        """Verify NULL, empty, and whitespace-only company names are excluded."""
+        with self.TestingSessionLocal() as session:
+            jobs = [
+                Job(
+                    id=1,
+                    slug="job-valid-comp",
+                    title="Dev",
+                    company_name="ValidCorp",
+                    description="Job desc",
+                    url="https://example.com/1",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                ),
+                Job(
+                    id=2,
+                    slug="job-empty-comp",
+                    title="Dev",
+                    company_name="",
+                    description="Job desc",
+                    url="https://example.com/2",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                ),
+                Job(
+                    id=3,
+                    slug="job-whitespace-comp",
+                    title="Dev",
+                    company_name="   ",
+                    description="Job desc",
+                    url="https://example.com/3",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                ),
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        response = self.client.get("/analytics/top-companies")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_companies"], 1)
+        self.assertEqual(len(data["companies"]), 1)
+        self.assertEqual(data["companies"][0]["company_name"], "ValidCorp")
+        self.assertEqual(data["companies"][0]["job_count"], 1)
+
+    def test_top_companies_limit_and_total_companies_independence(self):
+        """Verify total_companies reflects all valid companies regardless of requested limit."""
+        with self.TestingSessionLocal() as session:
+            jobs = [
+                Job(
+                    id=i + 1,
+                    slug=f"job-dist-comp-{i + 1}",
+                    title="Dev",
+                    company_name=f"Company {i + 1:02d}",
+                    description="Job desc",
+                    url=f"https://example.com/{i + 1}",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                for i in range(15)  # 15 distinct companies
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        # Request limit=5
+        response = self.client.get("/analytics/top-companies?limit=5")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_companies"], 15)
+        self.assertEqual(len(data["companies"]), 5)
+
+    def test_top_companies_default_limit(self):
+        """Verify default limit is 10 when not specified."""
+        with self.TestingSessionLocal() as session:
+            jobs = [
+                Job(
+                    id=i + 1,
+                    slug=f"job-def-comp-{i + 1}",
+                    title="Dev",
+                    company_name=f"Company {i + 1:02d}",
+                    description="Job desc",
+                    url=f"https://example.com/{i + 1}",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                for i in range(15)
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        response = self.client.get("/analytics/top-companies")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_companies"], 15)
+        self.assertEqual(len(data["companies"]), 10)  # Default limit=10
+
+    def test_top_companies_limit_validation(self):
+        """Verify limit must be between 1 and 50, returning 422 for invalid values."""
+        invalid_limits = [0, -1, 51, 100, "abc"]
+        for lim in invalid_limits:
+            with self.subTest(limit=lim):
+                response = self.client.get(f"/analytics/top-companies?limit={lim}")
+                self.assertEqual(
+                    response.status_code,
+                    422,
+                    f"Expected 422 for limit={lim}, got {response.status_code}",
+                )
+
+
 
 
 if __name__ == "__main__":

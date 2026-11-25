@@ -117,3 +117,36 @@ class TopTitlesResponse(BaseModel):
     titles: List[TitleCount] = Field(..., description="List of top job titles and their posting counts")
 
 
+class CompanyCount(BaseModel):
+    """
+    Schema representing a hiring company and its job posting frequency count.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
+    company_name: str = Field(..., description="Hiring organization name")
+    job_count: int = Field(..., ge=0, description="Number of job postings by this company")
+
+
+class TopCompaniesResponse(BaseModel):
+    """
+    Response schema for the top hiring companies analytics endpoint.
+
+    Attributes:
+        total_companies: Total number of distinct valid hiring companies in the database.
+        companies: List of top hiring companies sorted by frequency descending, then company_name ascending.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
+    total_companies: int = Field(..., ge=0, description="Total number of distinct valid hiring companies")
+    companies: List[CompanyCount] = Field(..., description="List of top hiring companies and their posting counts")
+
+
+

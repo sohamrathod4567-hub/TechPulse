@@ -15,9 +15,11 @@ from sqlalchemy.orm import Session
 from techpulse.api.dependencies import get_db
 from techpulse.api.schemas import (
     AnalyticsOverviewResponse,
+    CompanyCount,
     JobListResponse,
     JobResponse,
     TitleCount,
+    TopCompaniesResponse,
     TopTitlesResponse,
 )
 from techpulse.database.models import Job
@@ -289,6 +291,64 @@ def get_top_titles(
     ]
 
     return TopTitlesResponse(total_titles=total_titles, titles=titles)
+
+
+@app.get(
+    "/analytics/top-companies",
+    status_code=status.HTTP_200_OK,
+    response_model=TopCompaniesResponse,
+    summary="Get Top Hiring Companies by Posting Frequency",
+    tags=["Analytics"],
+)
+def get_top_companies(
+    limit: int = Query(
+        default=10,
+        ge=1,
+        le=50,
+        description="Maximum number of top hiring companies to return (1-50)",
+    ),
+    db: Session = Depends(get_db),
+) -> TopCompaniesResponse:
+    """
+    Retrieve top hiring companies ranked by job posting frequency with alphabetical tie-breaking.
+
+    Features:
+        - Excludes NULL, empty, and whitespace-only company names.
+        - Groups job listings by company_name and computes occurrence count.
+        - Sorts primarily by job_count descending, secondarily by company_name ascending.
+        - Calculates the total number of distinct valid company names.
+        - Limits result set within range [1, 50] (default 10).
+        - Safely handles empty databases.
+    """
+    # 1. Total distinct valid company names count (independent of limit)
+    total_count_stmt = select(func.count(func.distinct(Job.company_name))).where(
+        Job.company_name.is_not(None),
+        func.trim(Job.company_name) != "",
+    )
+    total_companies = db.scalar(total_count_stmt) or 0
+
+    # 2. Grouped, counted, sorted, and limited companies query
+    companies_stmt = (
+        select(
+            Job.company_name,
+            func.count(Job.id).label("job_count"),
+        )
+        .where(
+            Job.company_name.is_not(None),
+            func.trim(Job.company_name) != "",
+        )
+        .group_by(Job.company_name)
+        .order_by(func.count(Job.id).desc(), Job.company_name.asc())
+        .limit(limit)
+    )
+    rows = db.execute(companies_stmt).all()
+    companies = [
+        CompanyCount(company_name=row.company_name, job_count=row.job_count)
+        for row in rows
+    ]
+
+    return TopCompaniesResponse(total_companies=total_companies, companies=companies)
+
 
 
 

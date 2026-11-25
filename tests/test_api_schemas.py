@@ -16,9 +16,11 @@ if str(SRC_DIR) not in sys.path:
 from pydantic import ValidationError
 from techpulse.api.schemas import (
     AnalyticsOverviewResponse,
+    CompanyCount,
     JobListResponse,
     JobResponse,
     TitleCount,
+    TopCompaniesResponse,
     TopTitlesResponse,
 )
 from techpulse.database.models import Job
@@ -167,6 +169,31 @@ class TestApiSchemas(unittest.TestCase):
         # Negative total_titles should fail
         with self.assertRaises(ValidationError):
             TopTitlesResponse(total_titles=-1, titles=[])
+
+    def test_top_companies_response(self):
+        """Verify CompanyCount and TopCompaniesResponse schema validation and serialization."""
+        comp1 = CompanyCount(company_name="Google", job_count=20)
+        comp2 = CompanyCount(company_name="Amazon", job_count=12)
+
+        response = TopCompaniesResponse(total_companies=100, companies=[comp1, comp2])
+        self.assertEqual(response.total_companies, 100)
+        self.assertEqual(len(response.companies), 2)
+        self.assertEqual(response.companies[0].company_name, "Google")
+        self.assertEqual(response.companies[0].job_count, 20)
+
+        dumped = response.model_dump()
+        self.assertIn("total_companies", dumped)
+        self.assertIn("companies", dumped)
+        self.assertEqual(dumped["companies"][0]["company_name"], "Google")
+
+        # Negative job_count should fail
+        with self.assertRaises(ValidationError):
+            CompanyCount(company_name="Acme", job_count=-1)
+
+        # Negative total_companies should fail
+        with self.assertRaises(ValidationError):
+            TopCompaniesResponse(total_companies=-1, companies=[])
+
 
 
 
