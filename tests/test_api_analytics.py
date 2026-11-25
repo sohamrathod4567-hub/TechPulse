@@ -344,6 +344,208 @@ class TestAnalyticsEndpoint(unittest.TestCase):
         self.assertEqual(res_job.status_code, 200)
         self.assertEqual(res_job.json()["id"], 1)
 
+    def test_top_titles_empty_database(self):
+        """Verify GET /analytics/top-titles returns total_titles=0 and empty list on empty database."""
+        response = self.client.get("/analytics/top-titles")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_titles"], 0)
+        self.assertEqual(data["titles"], [])
+
+    def test_top_titles_counts_and_ordering(self):
+        """Verify top titles calculates correct job counts and orders by count descending."""
+        with self.TestingSessionLocal() as session:
+            # 4x "Python Developer", 3x "DevOps Engineer", 2x "Data Scientist", 1x "QA Engineer"
+            titles_data = (
+                ["Python Developer"] * 4
+                + ["DevOps Engineer"] * 3
+                + ["Data Scientist"] * 2
+                + ["QA Engineer"] * 1
+            )
+            jobs = [
+                Job(
+                    id=i + 1,
+                    slug=f"job-top-{i + 1}",
+                    title=title,
+                    company_name="Tech Corp",
+                    description="Job desc",
+                    url=f"https://example.com/{i + 1}",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                for i, title in enumerate(titles_data)
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        response = self.client.get("/analytics/top-titles")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_titles"], 4)
+        self.assertEqual(len(data["titles"]), 4)
+
+        expected = [
+            ("Python Developer", 4),
+            ("DevOps Engineer", 3),
+            ("Data Scientist", 2),
+            ("QA Engineer", 1),
+        ]
+        for idx, (exp_title, exp_count) in enumerate(expected):
+            self.assertEqual(data["titles"][idx]["title"], exp_title)
+            self.assertEqual(data["titles"][idx]["job_count"], exp_count)
+
+    def test_top_titles_alphabetical_tie_breaker(self):
+        """Verify titles with identical job counts are ordered alphabetically ascending."""
+        with self.TestingSessionLocal() as session:
+            # Identical counts (2 each): "Zebra Dev", "Alpha Dev", "Beta Dev"
+            titles_data = ["Zebra Dev", "Zebra Dev", "Alpha Dev", "Alpha Dev", "Beta Dev", "Beta Dev"]
+            jobs = [
+                Job(
+                    id=i + 1,
+                    slug=f"job-tie-{i + 1}",
+                    title=title,
+                    company_name="Tech Corp",
+                    description="Job desc",
+                    url=f"https://example.com/{i + 1}",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                for i, title in enumerate(titles_data)
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        response = self.client.get("/analytics/top-titles")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_titles"], 3)
+        self.assertEqual(len(data["titles"]), 3)
+
+        # Count is 2 for all, so alphabetical order: Alpha Dev, Beta Dev, Zebra Dev
+        self.assertEqual(data["titles"][0]["title"], "Alpha Dev")
+        self.assertEqual(data["titles"][0]["job_count"], 2)
+        self.assertEqual(data["titles"][1]["title"], "Beta Dev")
+        self.assertEqual(data["titles"][1]["job_count"], 2)
+        self.assertEqual(data["titles"][2]["title"], "Zebra Dev")
+        self.assertEqual(data["titles"][2]["job_count"], 2)
+
+    def test_top_titles_limit_and_total_titles_independence(self):
+        """Verify total_titles reflects all distinct titles regardless of the requested limit."""
+        with self.TestingSessionLocal() as session:
+            jobs = [
+                Job(
+                    id=i + 1,
+                    slug=f"job-dist-{i + 1}",
+                    title=f"Role {i + 1:02d}",
+                    company_name="Tech Corp",
+                    description="Job desc",
+                    url=f"https://example.com/{i + 1}",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                for i in range(15)  # 15 distinct titles
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        # Request with limit=5
+        response = self.client.get("/analytics/top-titles?limit=5")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        # total_titles must be 15 even though titles only has 5 items
+        self.assertEqual(data["total_titles"], 15)
+        self.assertEqual(len(data["titles"]), 5)
+
+    def test_top_titles_default_limit(self):
+        """Verify default limit is 10 when not specified."""
+        with self.TestingSessionLocal() as session:
+            jobs = [
+                Job(
+                    id=i + 1,
+                    slug=f"job-def-{i + 1}",
+                    title=f"Role {i + 1:02d}",
+                    company_name="Tech Corp",
+                    description="Job desc",
+                    url=f"https://example.com/{i + 1}",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                for i in range(15)
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        response = self.client.get("/analytics/top-titles")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_titles"], 15)
+        self.assertEqual(len(data["titles"]), 10)  # Default limit=10
+
+    def test_top_titles_limit_validation(self):
+        """Verify limit must be between 1 and 50, returning 422 for invalid values."""
+        invalid_limits = [0, -1, 51, 100, "abc"]
+        for lim in invalid_limits:
+            with self.subTest(limit=lim):
+                response = self.client.get(f"/analytics/top-titles?limit={lim}")
+                self.assertEqual(
+                    response.status_code,
+                    422,
+                    f"Expected 422 for limit={lim}, got {response.status_code}",
+                )
+
+    def test_top_titles_excludes_null_or_empty_titles(self):
+        """Verify empty and whitespace-only titles are excluded from top titles and total count."""
+        with self.TestingSessionLocal() as session:
+            jobs = [
+                Job(
+                    id=1,
+                    slug="job-valid-1",
+                    title="Valid Title",
+                    company_name="Tech Corp",
+                    description="Job desc",
+                    url="https://example.com/1",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                ),
+                Job(
+                    id=2,
+                    slug="job-empty-1",
+                    title="",
+                    company_name="Tech Corp",
+                    description="Job desc",
+                    url="https://example.com/2",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                ),
+                Job(
+                    id=3,
+                    slug="job-whitespace-1",
+                    title="   ",
+                    company_name="Tech Corp",
+                    description="Job desc",
+                    url="https://example.com/3",
+                    inserted_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                ),
+            ]
+            session.add_all(jobs)
+            session.commit()
+
+        response = self.client.get("/analytics/top-titles")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["total_titles"], 1)
+        self.assertEqual(len(data["titles"]), 1)
+        self.assertEqual(data["titles"][0]["title"], "Valid Title")
+        self.assertEqual(data["titles"][0]["job_count"], 1)
+
+
 
 if __name__ == "__main__":
     unittest.main()

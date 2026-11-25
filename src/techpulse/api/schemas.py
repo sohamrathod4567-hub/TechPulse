@@ -84,3 +84,36 @@ class AnalyticsOverviewResponse(BaseModel):
     unique_companies: int = Field(..., ge=0, description="Number of distinct hiring companies")
     unique_locations: int = Field(..., ge=0, description="Number of distinct non-null, non-empty locations")
 
+
+class TitleCount(BaseModel):
+    """
+    Schema representing a job title and its frequency count.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
+    title: str = Field(..., description="Job designation or title")
+    job_count: int = Field(..., ge=0, description="Number of job postings with this title")
+
+
+class TopTitlesResponse(BaseModel):
+    """
+    Response schema for the top job titles analytics endpoint.
+
+    Attributes:
+        total_titles: Total number of distinct non-null, non-empty job titles in the database.
+        titles: List of top job titles sorted by frequency descending, then title ascending.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
+    total_titles: int = Field(..., ge=0, description="Total number of distinct non-null, non-empty job titles")
+    titles: List[TitleCount] = Field(..., description="List of top job titles and their posting counts")
+
+

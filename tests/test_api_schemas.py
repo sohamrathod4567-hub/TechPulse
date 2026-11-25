@@ -18,6 +18,8 @@ from techpulse.api.schemas import (
     AnalyticsOverviewResponse,
     JobListResponse,
     JobResponse,
+    TitleCount,
+    TopTitlesResponse,
 )
 from techpulse.database.models import Job
 
@@ -141,6 +143,31 @@ class TestApiSchemas(unittest.TestCase):
                 unique_companies=0,
                 unique_locations=0,
             )
+
+    def test_top_titles_response(self):
+        """Verify TitleCount and TopTitlesResponse schema validation and serialization."""
+        item1 = TitleCount(title="Software Engineer", job_count=15)
+        item2 = TitleCount(title="Product Manager", job_count=8)
+
+        response = TopTitlesResponse(total_titles=50, titles=[item1, item2])
+        self.assertEqual(response.total_titles, 50)
+        self.assertEqual(len(response.titles), 2)
+        self.assertEqual(response.titles[0].title, "Software Engineer")
+        self.assertEqual(response.titles[0].job_count, 15)
+
+        dumped = response.model_dump()
+        self.assertIn("total_titles", dumped)
+        self.assertIn("titles", dumped)
+        self.assertEqual(dumped["titles"][0]["title"], "Software Engineer")
+
+        # Negative job_count should fail
+        with self.assertRaises(ValidationError):
+            TitleCount(title="Dev", job_count=-1)
+
+        # Negative total_titles should fail
+        with self.assertRaises(ValidationError):
+            TopTitlesResponse(total_titles=-1, titles=[])
+
 
 
 

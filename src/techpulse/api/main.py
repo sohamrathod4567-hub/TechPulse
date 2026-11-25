@@ -9,11 +9,17 @@ and resource endpoints.
 from typing import Dict, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Path, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
 
 from techpulse.api.dependencies import get_db
-from techpulse.api.schemas import JobListResponse, JobResponse
+from techpulse.api.schemas import (
+    AnalyticsOverviewResponse,
+    JobListResponse,
+    JobResponse,
+    TitleCount,
+    TopTitlesResponse,
+)
 from techpulse.database.models import Job
 
 # Instantiate the FastAPI application with metadata
@@ -159,4 +165,130 @@ def get_job(
             detail=f"Job with ID {job_id} not found",
         )
     return job
+
+
+@app.get(
+    "/analytics/overview",
+    status_code=status.HTTP_200_OK,
+    response_model=AnalyticsOverviewResponse,
+    summary="Get Analytics Overview",
+    tags=["Analytics"],
+)
+def get_analytics_overview(
+    db: Session = Depends(get_db),
+) -> AnalyticsOverviewResponse:
+    """
+    Compute and return high-level aggregate statistics across all job listings.
+
+    Calculations are performed entirely in SQL using aggregate functions:
+        - total_jobs: COUNT(Job.id)
+        - remote_jobs: COUNT(CASE WHEN remote IS true THEN 1 END)
+        - non_remote_jobs: COUNT(CASE WHEN remote IS false THEN 1 END)
+        - jobs_with_location: COUNT(CASE WHEN location IS NOT NULL AND TRIM(location) != '' THEN 1 END)
+        - unique_companies: COUNT(DISTINCT company_name)
+        - unique_locations: COUNT(DISTINCT CASE WHEN location IS NOT NULL AND TRIM(location) != '' THEN TRIM(location) END)
+
+    Returns:
+        AnalyticsOverviewResponse: Aggregated counts and uniqueness metrics.
+    """
+    stmt = select(
+        func.count(Job.id).label("total_jobs"),
+        func.count(case((Job.remote.is_(True), 1))).label("remote_jobs"),
+        func.count(case((Job.remote.is_(False), 1))).label("non_remote_jobs"),
+        func.count(
+            case(
+                (
+                    and_(
+                        Job.location.is_not(None),
+                        func.trim(Job.location) != "",
+                    ),
+                    1,
+                )
+            )
+        ).label("jobs_with_location"),
+        func.count(func.distinct(Job.company_name)).label("unique_companies"),
+        func.count(
+            func.distinct(
+                case(
+                    (
+                        and_(
+                            Job.location.is_not(None),
+                            func.trim(Job.location) != "",
+                        ),
+                        func.trim(Job.location),
+                    )
+                )
+            )
+        ).label("unique_locations"),
+    )
+
+    row = db.execute(stmt).one()
+    data = row._mapping
+
+    return AnalyticsOverviewResponse(
+        total_jobs=data["total_jobs"] or 0,
+        remote_jobs=data["remote_jobs"] or 0,
+        non_remote_jobs=data["non_remote_jobs"] or 0,
+        jobs_with_location=data["jobs_with_location"] or 0,
+        unique_companies=data["unique_companies"] or 0,
+        unique_locations=data["unique_locations"] or 0,
+    )
+
+
+@app.get(
+    "/analytics/top-titles",
+    status_code=status.HTTP_200_OK,
+    response_model=TopTitlesResponse,
+    summary="Get Top Job Titles by Frequency",
+    tags=["Analytics"],
+)
+def get_top_titles(
+    limit: int = Query(
+        default=10,
+        ge=1,
+        le=50,
+        description="Maximum number of top job titles to return (1-50)",
+    ),
+    db: Session = Depends(get_db),
+) -> TopTitlesResponse:
+    """
+    Retrieve top job titles ranked by listing frequency with tie-breaking alphabetically.
+
+    Features:
+        - Groups job listings by title and computes occurrence count.
+        - Sorts primarily by job_count descending, secondarily by title ascending.
+        - Calculates the total number of distinct non-null, non-empty titles.
+        - Limits result set within range [1, 50] (default 10).
+        - Safely handles empty databases.
+    """
+    # Query total distinct non-null, non-empty titles count
+    total_count_stmt = select(func.count(func.distinct(Job.title))).where(
+        Job.title.is_not(None),
+        func.trim(Job.title) != "",
+    )
+    total_titles = db.scalar(total_count_stmt) or 0
+
+    # Query top titles grouped, sorted, and limited in SQL
+    titles_stmt = (
+        select(
+            Job.title,
+            func.count(Job.id).label("job_count"),
+        )
+        .where(
+            Job.title.is_not(None),
+            func.trim(Job.title) != "",
+        )
+        .group_by(Job.title)
+        .order_by(func.count(Job.id).desc(), Job.title.asc())
+        .limit(limit)
+    )
+    rows = db.execute(titles_stmt).all()
+    titles = [
+        TitleCount(title=row.title, job_count=row.job_count)
+        for row in rows
+    ]
+
+    return TopTitlesResponse(total_titles=total_titles, titles=titles)
+
+
 
