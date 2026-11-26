@@ -21,11 +21,13 @@ from techpulse.api.schemas import (
     LocationCount,
     LocationsResponse,
     RemoteDistributionResponse,
+    SkillCount,
     TitleCount,
     TopCompaniesResponse,
+    TopSkillsResponse,
     TopTitlesResponse,
 )
-from techpulse.database.models import Job
+from techpulse.database.models import Job, JobSkill, Skill
 
 # Instantiate the FastAPI application with metadata
 app = FastAPI(
@@ -465,6 +467,72 @@ def get_remote_distribution(
         non_remote_percentage=non_remote_percentage,
         unspecified_percentage=unspecified_percentage,
     )
+
+
+@app.get(
+    "/analytics/top-skills",
+    status_code=status.HTTP_200_OK,
+    response_model=TopSkillsResponse,
+    summary="Get Top Technical Skills by Job Posting Frequency",
+    tags=["Analytics"],
+)
+def get_top_skills(
+    limit: int = Query(
+        default=10,
+        ge=1,
+        le=50,
+        description="Maximum number of top technical skills to return (1-50)",
+    ),
+    db: Session = Depends(get_db),
+) -> TopSkillsResponse:
+    """
+    Retrieve top technical skills ranked by job posting frequency with alphabetical tie-breaking.
+
+    Features:
+        - Joins Skill and JobSkill to compute posting frequencies.
+        - Counts distinct jobs per skill to prevent duplicate counts.
+        - Excludes skills with zero job associations.
+        - Calculates total number of distinct skills with >= 1 job association independent of limit.
+        - Sorts primarily by job_count descending, secondarily by skill name ascending.
+        - Limits result set within range [1, 50] (default 10).
+        - Safely handles empty databases.
+    """
+    # 1. Total distinct skills with at least one job association (independent of limit)
+    total_skills_stmt = (
+        select(func.count(func.distinct(Skill.id)))
+        .select_from(Skill)
+        .join(JobSkill, Skill.id == JobSkill.skill_id)
+    )
+    total_skills = db.scalar(total_skills_stmt) or 0
+
+    # 2. Grouped, counted, sorted, and limited skills query
+    skills_stmt = (
+        select(
+            Skill.name.label("skill"),
+            Skill.category.label("category"),
+            func.count(func.distinct(JobSkill.job_id)).label("job_count"),
+        )
+        .select_from(Skill)
+        .join(JobSkill, Skill.id == JobSkill.skill_id)
+        .group_by(Skill.id, Skill.name, Skill.category)
+        .order_by(
+            func.count(func.distinct(JobSkill.job_id)).desc(),
+            Skill.name.asc(),
+        )
+        .limit(limit)
+    )
+    rows = db.execute(skills_stmt).all()
+    skills = [
+        SkillCount(
+            skill=row.skill,
+            category=row.category,
+            job_count=row.job_count,
+        )
+        for row in rows
+    ]
+
+    return TopSkillsResponse(total_skills=total_skills, skills=skills)
+
 
 
 

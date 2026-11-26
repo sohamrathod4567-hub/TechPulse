@@ -22,8 +22,10 @@ from techpulse.api.schemas import (
     LocationCount,
     LocationsResponse,
     RemoteDistributionResponse,
+    SkillCount,
     TitleCount,
     TopCompaniesResponse,
+    TopSkillsResponse,
     TopTitlesResponse,
 )
 from techpulse.database.models import Job
@@ -268,6 +270,39 @@ class TestApiSchemas(unittest.TestCase):
                 non_remote_percentage=0.0,
                 unspecified_percentage=0.0,
             )
+
+    def test_top_skills_response_schemas(self):
+        """Verify SkillCount and TopSkillsResponse validation and serialization."""
+        skill_item = SkillCount(
+            skill="Python",
+            category="Programming Languages",
+            job_count=44,
+        )
+        self.assertEqual(skill_item.skill, "Python")
+        self.assertEqual(skill_item.category, "Programming Languages")
+        self.assertEqual(skill_item.job_count, 44)
+
+        # Negative job_count should fail
+        with self.assertRaises(ValidationError):
+            SkillCount(skill="Python", category="Programming Languages", job_count=-1)
+
+        response = TopSkillsResponse(
+            total_skills=1,
+            skills=[skill_item],
+        )
+        self.assertEqual(response.total_skills, 1)
+        self.assertEqual(len(response.skills), 1)
+        self.assertEqual(response.skills[0].skill, "Python")
+
+        dumped = response.model_dump()
+        self.assertEqual(dumped["total_skills"], 1)
+        self.assertEqual(dumped["skills"][0]["skill"], "Python")
+        self.assertEqual(dumped["skills"][0]["category"], "Programming Languages")
+        self.assertEqual(dumped["skills"][0]["job_count"], 44)
+
+        # Negative total_skills should fail
+        with self.assertRaises(ValidationError):
+            TopSkillsResponse(total_skills=-1, skills=[])
 
 
 

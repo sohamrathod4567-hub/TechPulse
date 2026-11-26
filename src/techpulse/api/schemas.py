@@ -209,6 +209,40 @@ class RemoteDistributionResponse(BaseModel):
     unspecified_percentage: float = Field(..., ge=0.0, le=100.0, description="Percentage of unspecified remote jobs")
 
 
+class SkillCount(BaseModel):
+    """
+    Schema representing an individual canonical skill and its job posting frequency count.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
+    skill: str = Field(..., description="Canonical technical skill name")
+    category: str = Field(..., description="Taxonomy classification category")
+    job_count: int = Field(..., ge=0, description="Number of distinct job postings requiring or mentioning this skill")
+
+
+class TopSkillsResponse(BaseModel):
+    """
+    Response schema for the top in-demand technical skills analytics endpoint.
+
+    Attributes:
+        total_skills: Total number of distinct skills with at least one job association.
+        skills: List of top skills sorted by frequency descending, then skill name ascending.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
+    total_skills: int = Field(..., ge=0, description="Total number of distinct skills with at least one job association")
+    skills: List[SkillCount] = Field(..., description="List of top skills and their job posting counts")
+
+
+
 
 
 
