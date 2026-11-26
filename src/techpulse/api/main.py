@@ -21,7 +21,11 @@ from techpulse.api.schemas import (
     LocationCount,
     LocationsResponse,
     RemoteDistributionResponse,
+    SkillCategoriesResponse,
+    SkillCategoryCount,
     SkillCount,
+    SkillLocationCount,
+    SkillsByLocationResponse,
     TitleCount,
     TopCompaniesResponse,
     TopSkillsResponse,
@@ -534,8 +538,168 @@ def get_top_skills(
     return TopSkillsResponse(total_skills=total_skills, skills=skills)
 
 
+@app.get(
+    "/analytics/skill-categories",
+    status_code=status.HTTP_200_OK,
+    response_model=SkillCategoriesResponse,
+    summary="Get Technical Skill Analytics by Taxonomy Category",
+    tags=["Analytics"],
+)
+def get_skill_categories(
+    limit: int = Query(
+        default=10,
+        ge=1,
+        le=50,
+        description="Maximum number of skill categories to return (1-50)",
+    ),
+    db: Session = Depends(get_db),
+) -> SkillCategoriesResponse:
+    """
+    Retrieve skill taxonomy categories ranked by distinct job demand with alphabetical tie-breaking.
+
+    Features:
+        - Joins Skill and JobSkill to compute aggregate category demand metrics.
+        - Calculates:
+            * skill_count: distinct skills in category with >= 1 job association.
+            * total_job_associations: total association records in category.
+            * unique_jobs: distinct jobs associated with >= 1 skill in category.
+        - Excludes categories with zero detected job associations.
+        - Calculates total number of active categories independent of limit.
+        - Sorts primarily by unique_jobs descending, secondarily by category name ascending.
+        - Limits result set within range [1, 50] (default 10).
+        - Safely handles empty databases.
+    """
+    # 1. Total distinct categories with at least one job association (independent of limit)
+    total_categories_stmt = (
+        select(func.count(func.distinct(Skill.category)))
+        .select_from(Skill)
+        .join(JobSkill, Skill.id == JobSkill.skill_id)
+    )
+    total_categories = db.scalar(total_categories_stmt) or 0
+
+    # 2. Grouped, calculated, sorted, and limited categories query
+    categories_stmt = (
+        select(
+            Skill.category.label("category"),
+            func.count(func.distinct(Skill.id)).label("skill_count"),
+            func.count(JobSkill.job_id).label("total_job_associations"),
+            func.count(func.distinct(JobSkill.job_id)).label("unique_jobs"),
+        )
+        .select_from(Skill)
+        .join(JobSkill, Skill.id == JobSkill.skill_id)
+        .group_by(Skill.category)
+        .order_by(
+            func.count(func.distinct(JobSkill.job_id)).desc(),
+            Skill.category.asc(),
+        )
+        .limit(limit)
+    )
+    rows = db.execute(categories_stmt).all()
+    categories = [
+        SkillCategoryCount(
+            category=row.category,
+            skill_count=row.skill_count,
+            total_job_associations=row.total_job_associations,
+            unique_jobs=row.unique_jobs,
+        )
+        for row in rows
+    ]
+
+    return SkillCategoriesResponse(total_categories=total_categories, categories=categories)
 
 
+@app.get(
+    "/analytics/skills-by-location",
+    status_code=status.HTTP_200_OK,
+    response_model=SkillsByLocationResponse,
+    summary="Get Top Technical Skills Demanded by Geographic Location",
+    tags=["Analytics"],
+)
+def get_skills_by_location(
+    location: str = Query(
+        ...,
+        description="Geographic location to filter skills by (case-insensitive, trimmed)",
+    ),
+    limit: int = Query(
+        default=10,
+        ge=1,
+        le=50,
+        description="Maximum number of top skills to return (1-50)",
+    ),
+    db: Session = Depends(get_db),
+) -> SkillsByLocationResponse:
+    """
+    Retrieve top technical skills demanded in a specific geographic location.
+
+    Features:
+        - Requires a non-empty location query parameter.
+        - Trims leading and trailing whitespace from the location input.
+        - Returns HTTP 422 if location is empty or whitespace-only.
+        - Matches Job.location case-insensitively and whitespace-insensitively in SQL.
+        - Filters out NULL and blank locations in SQL.
+        - Joins Job, JobSkill, and Skill models.
+        - Computes distinct job counts per skill to prevent duplicate counts.
+        - Excludes skills without associations in the specified location.
+        - Calculates total distinct skills in the location independently of the limit.
+        - Sorts primarily by job_count descending, secondarily by skill name ascending.
+        - Returns HTTP 200 with total_skills=0 and empty skills list if no jobs match.
+    """
+    normalized_location = location.strip() if location else ""
+    if not normalized_location:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Query parameter 'location' must not be empty or whitespace-only.",
+        )
+
+    # 1. Total distinct skills associated with jobs in this location (independent of limit)
+    total_skills_stmt = (
+        select(func.count(func.distinct(Skill.id)))
+        .select_from(Skill)
+        .join(JobSkill, Skill.id == JobSkill.skill_id)
+        .join(Job, Job.id == JobSkill.job_id)
+        .where(
+            Job.location.is_not(None),
+            func.lower(func.trim(Job.location)) == normalized_location.lower(),
+        )
+    )
+    total_skills = db.scalar(total_skills_stmt) or 0
+
+    # 2. Grouped, counted, sorted, and limited skills query
+    skills_stmt = (
+        select(
+            Skill.name.label("skill"),
+            Skill.category.label("category"),
+            func.count(func.distinct(Job.id)).label("job_count"),
+        )
+        .select_from(Skill)
+        .join(JobSkill, Skill.id == JobSkill.skill_id)
+        .join(Job, Job.id == JobSkill.job_id)
+        .where(
+            Job.location.is_not(None),
+            func.lower(func.trim(Job.location)) == normalized_location.lower(),
+        )
+        .group_by(Skill.id, Skill.name, Skill.category)
+        .order_by(
+            func.count(func.distinct(Job.id)).desc(),
+            Skill.name.asc(),
+        )
+        .limit(limit)
+    )
+    rows = db.execute(skills_stmt).all()
+    skills = [
+        SkillLocationCount(
+            skill=row.skill,
+            category=row.category,
+            job_count=row.job_count,
+        )
+        for row in rows
+    ]
+
+    return SkillsByLocationResponse(
+        location=normalized_location,
+        total_skills=total_skills,
+        skills=skills,
+    )
 
 
 

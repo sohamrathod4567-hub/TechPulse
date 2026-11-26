@@ -242,6 +242,77 @@ class TopSkillsResponse(BaseModel):
     skills: List[SkillCount] = Field(..., description="List of top skills and their job posting counts")
 
 
+class SkillCategoryCount(BaseModel):
+    """
+    Schema representing aggregate analytics for a technical skill taxonomy category.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
+    category: str = Field(..., description="Taxonomy classification category name")
+    skill_count: int = Field(..., ge=0, description="Distinct skills in category with at least one job association")
+    total_job_associations: int = Field(..., ge=0, description="Total number of job-skill association records in category")
+    unique_jobs: int = Field(..., ge=0, description="Number of distinct jobs associated with at least one skill in category")
+
+
+class SkillCategoriesResponse(BaseModel):
+    """
+    Response schema for the skill categories analytics endpoint.
+
+    Attributes:
+        total_categories: Total number of distinct categories with at least one associated job.
+        categories: List of category analytics sorted by unique_jobs descending, then category ascending.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
+    total_categories: int = Field(..., ge=0, description="Total number of categories with at least one job association")
+    categories: List[SkillCategoryCount] = Field(..., description="List of category analytics and posting counts")
+
+
+class SkillLocationCount(BaseModel):
+    """
+    Schema representing an individual skill frequency count within a specific geographic location.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
+    skill: str = Field(..., description="Canonical technical skill name")
+    category: str = Field(..., description="Taxonomy classification category")
+    job_count: int = Field(..., ge=0, description="Number of distinct job postings in this location requiring this skill")
+
+
+class SkillsByLocationResponse(BaseModel):
+    """
+    Response schema for the skills by location analytics endpoint.
+
+    Attributes:
+        location: Normalized geographic location queried.
+        total_skills: Total number of distinct skills associated with jobs in this location.
+        skills: List of top skills ranked by job count descending, then skill name ascending.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
+    location: str = Field(..., description="Normalized location string")
+    total_skills: int = Field(..., ge=0, description="Total number of distinct skills associated with jobs in this location")
+    skills: List[SkillLocationCount] = Field(..., description="List of top skills and their job posting counts in this location")
+
+
+
+
 
 
 

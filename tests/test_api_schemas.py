@@ -22,7 +22,11 @@ from techpulse.api.schemas import (
     LocationCount,
     LocationsResponse,
     RemoteDistributionResponse,
+    SkillCategoriesResponse,
+    SkillCategoryCount,
     SkillCount,
+    SkillLocationCount,
+    SkillsByLocationResponse,
     TitleCount,
     TopCompaniesResponse,
     TopSkillsResponse,
@@ -303,6 +307,80 @@ class TestApiSchemas(unittest.TestCase):
         # Negative total_skills should fail
         with self.assertRaises(ValidationError):
             TopSkillsResponse(total_skills=-1, skills=[])
+
+    def test_skill_categories_response_schemas(self):
+        """Verify SkillCategoryCount and SkillCategoriesResponse validation and serialization."""
+        cat_item = SkillCategoryCount(
+            category="Programming Languages",
+            skill_count=12,
+            total_job_associations=120,
+            unique_jobs=85,
+        )
+        self.assertEqual(cat_item.category, "Programming Languages")
+        self.assertEqual(cat_item.skill_count, 12)
+        self.assertEqual(cat_item.total_job_associations, 120)
+        self.assertEqual(cat_item.unique_jobs, 85)
+
+        # Negative count fields should fail
+        with self.assertRaises(ValidationError):
+            SkillCategoryCount(category="Cloud", skill_count=-1, total_job_associations=10, unique_jobs=5)
+        with self.assertRaises(ValidationError):
+            SkillCategoryCount(category="Cloud", skill_count=5, total_job_associations=-1, unique_jobs=5)
+        with self.assertRaises(ValidationError):
+            SkillCategoryCount(category="Cloud", skill_count=5, total_job_associations=10, unique_jobs=-1)
+
+        response = SkillCategoriesResponse(
+            total_categories=1,
+            categories=[cat_item],
+        )
+        self.assertEqual(response.total_categories, 1)
+        self.assertEqual(len(response.categories), 1)
+
+        dumped = response.model_dump()
+        self.assertEqual(dumped["total_categories"], 1)
+        self.assertEqual(dumped["categories"][0]["category"], "Programming Languages")
+        self.assertEqual(dumped["categories"][0]["skill_count"], 12)
+        self.assertEqual(dumped["categories"][0]["total_job_associations"], 120)
+        self.assertEqual(dumped["categories"][0]["unique_jobs"], 85)
+
+        # Negative total_categories should fail
+        with self.assertRaises(ValidationError):
+            SkillCategoriesResponse(total_categories=-1, categories=[])
+
+    def test_skills_by_location_response_schemas(self):
+        """Verify SkillLocationCount and SkillsByLocationResponse validation and serialization."""
+        item = SkillLocationCount(
+            skill="Python",
+            category="Programming Languages",
+            job_count=18,
+        )
+        self.assertEqual(item.skill, "Python")
+        self.assertEqual(item.category, "Programming Languages")
+        self.assertEqual(item.job_count, 18)
+
+        # Negative job_count should fail
+        with self.assertRaises(ValidationError):
+            SkillLocationCount(skill="Python", category="Programming Languages", job_count=-1)
+
+        response = SkillsByLocationResponse(
+            location="Paris",
+            total_skills=25,
+            skills=[item],
+        )
+        self.assertEqual(response.location, "Paris")
+        self.assertEqual(response.total_skills, 25)
+        self.assertEqual(len(response.skills), 1)
+
+        dumped = response.model_dump()
+        self.assertEqual(dumped["location"], "Paris")
+        self.assertEqual(dumped["total_skills"], 25)
+        self.assertEqual(dumped["skills"][0]["skill"], "Python")
+        self.assertEqual(dumped["skills"][0]["category"], "Programming Languages")
+        self.assertEqual(dumped["skills"][0]["job_count"], 18)
+
+        # Negative total_skills should fail
+        with self.assertRaises(ValidationError):
+            SkillsByLocationResponse(location="Paris", total_skills=-1, skills=[])
 
 
 
