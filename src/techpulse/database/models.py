@@ -16,6 +16,7 @@ from typing import Any, List, Optional
 from sqlalchemy import (
     Boolean,
     DateTime,
+    ForeignKey,
     Index,
     Integer,
     String,
@@ -24,7 +25,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
@@ -164,9 +165,145 @@ class Job(Base):
         doc="Record last modified timestamp in TechPulse",
     )
 
+    # 7. Relational Skill Associations
+    job_skills: Mapped[List[JobSkill]] = relationship(
+        "JobSkill",
+        back_populates="job",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        doc="Authoritative association records connecting this job to extracted skills",
+    )
+
+    skills: Mapped[List[Skill]] = relationship(
+        "Skill",
+        secondary="job_skills",
+        back_populates="jobs",
+        viewonly=True,
+        doc="Canonical skills associated with this job posting (read-only query view)",
+    )
+
     def __repr__(self) -> str:
         """User-friendly string representation of the Job instance."""
         return (
             f"<Job(id={self.id!r}, slug={self.slug!r}, "
             f"title={self.title!r}, company_name={self.company_name!r})>"
         )
+
+
+class Skill(Base):
+    """
+    Skill Model representing canonical technical skills in the TechPulse taxonomy.
+
+    Maps to the 'skills' table in PostgreSQL. Stores canonical skill names,
+    their taxonomy category, and relational links to job postings.
+
+    Attributes:
+        id (int): Primary key, auto-incrementing identifier.
+        name (str): Unique canonical skill name (e.g. 'Python', 'PostgreSQL').
+        category (str): Taxonomy category (e.g. 'Programming Languages', 'Databases').
+        job_skills (List[JobSkill]): Association records connecting to jobs.
+        jobs (List[Job]): Jobs mentioning this skill.
+    """
+
+    __tablename__ = "skills"
+
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_skills_name"),
+        Index("ix_skills_category", "category"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+        doc="Primary key identifier for skill",
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        doc="Unique canonical skill name",
+    )
+
+    category: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        doc="Taxonomy category of the technical skill",
+    )
+
+    # Relational Associations
+    job_skills: Mapped[List[JobSkill]] = relationship(
+        "JobSkill",
+        back_populates="skill",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        doc="Authoritative association records connecting this skill to jobs",
+    )
+
+    jobs: Mapped[List[Job]] = relationship(
+        "Job",
+        secondary="job_skills",
+        back_populates="skills",
+        viewonly=True,
+        doc="Job postings requiring or mentioning this skill (read-only query view)",
+    )
+
+    def __repr__(self) -> str:
+        """User-friendly string representation of the Skill instance."""
+        return f"<Skill(id={self.id!r}, name={self.name!r}, category={self.category!r})>"
+
+
+class JobSkill(Base):
+    """
+    JobSkill Association Model linking Jobs to their extracted canonical Skills.
+
+    Maps to the 'job_skills' junction table. Uses a composite primary key
+    `(job_id, skill_id)` to ensure unique associations, and CASCADE deletion
+    so that removing a Job or Skill automatically cleans up junction entries.
+
+    Attributes:
+        job_id (int): Foreign key referencing jobs.id (primary key component).
+        skill_id (int): Foreign key referencing skills.id (primary key component, indexed).
+        job (Job): Associated Job instance.
+        skill (Skill): Associated Skill instance.
+    """
+
+    __tablename__ = "job_skills"
+
+    __table_args__ = (
+        Index("ix_job_skills_skill_id", "skill_id"),
+    )
+
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+        doc="Foreign key referencing jobs.id",
+    )
+
+    skill_id: Mapped[int] = mapped_column(
+        ForeignKey("skills.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+        doc="Foreign key referencing skills.id",
+    )
+
+    # Relational Back-references
+    job: Mapped[Job] = relationship(
+        "Job",
+        back_populates="job_skills",
+        doc="Job instance associated with this junction record",
+    )
+
+    skill: Mapped[Skill] = relationship(
+        "Skill",
+        back_populates="job_skills",
+        doc="Skill instance associated with this junction record",
+    )
+
+    def __repr__(self) -> str:
+        """User-friendly string representation of the JobSkill instance."""
+        return f"<JobSkill(job_id={self.job_id!r}, skill_id={self.skill_id!r})>"
+
+
+__all__ = ["Base", "Job", "Skill", "JobSkill"]

@@ -42,7 +42,7 @@ from techpulse.database.connection import get_engine
 # CRITICAL: Import all models before invoking create_all().
 # SQLAlchemy's declarative Base registers models dynamically into Base.metadata
 # when their Python class definitions are imported and evaluated.
-from techpulse.database.models import Base, Job
+from techpulse.database.models import Base, Job, JobSkill, Skill
 
 # ---------------------------------------------------------------------------
 # Logging Configuration

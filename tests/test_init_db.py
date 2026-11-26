@@ -17,7 +17,7 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from techpulse.database.init_db import create_tables
-from techpulse.database.models import Base, Job
+from techpulse.database.models import Base, Job, JobSkill, Skill
 
 
 class TestInitDB(unittest.TestCase):
@@ -81,9 +81,16 @@ class TestInitDB(unittest.TestCase):
                 create_tables(engine=mock_engine, raise_on_error=True)
 
     def test_models_registered_in_metadata(self):
-        """Verify that Job model is registered in Base.metadata before create_all."""
+        """Verify that Job, Skill, and JobSkill models are registered in Base.metadata before create_all."""
         self.assertIn("jobs", Base.metadata.tables)
+        self.assertIn("skills", Base.metadata.tables)
+        self.assertIn("job_skills", Base.metadata.tables)
         self.assertEqual(Job.__tablename__, "jobs")
+        self.assertEqual(Skill.__tablename__, "skills")
+        self.assertEqual(JobSkill.__tablename__, "job_skills")
+        self.assertIs(Job.metadata, Base.metadata)
+        self.assertIs(Skill.metadata, Base.metadata)
+        self.assertIs(JobSkill.metadata, Base.metadata)
 
 
 if __name__ == "__main__":
